@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #e2e8f0;
+  background: #020617;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; background: #020617; }
+button, input, select, textarea { font: inherit; }
+a { color: inherit; text-decoration: none; }
+
+@layer components {
+  .card { @apply rounded-2xl border border-white/10 bg-white/[0.045] shadow-xl shadow-black/10; }
+  .input { @apply w-full rounded-xl border border-white/10 bg-white/[0.06] px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-boosty-500; }
+  .btn-primary { @apply rounded-xl bg-boosty-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-boosty-500 disabled:cursor-not-allowed disabled:opacity-50; }
+  .btn-secondary { @apply rounded-xl border border-white/10 bg-white/[0.06] px-4 py-3 text-sm font-semibold text-slate-200 transition hover:bg-white/10; }
+}

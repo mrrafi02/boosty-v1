@@ -1,0 +1,4 @@
+import { Link } from "react-router-dom";
+import { Users, Package, ShoppingCart, WalletCards, Settings, LifeBuoy } from "lucide-react";
+
+export default function Admin(){const cards=[["Users","/admin/users",Users],["Services","/admin/services",Package],["Orders","/admin/orders",ShoppingCart],["Deposits","/admin/deposits",WalletCards],["Support","/admin/support",LifeBuoy],["Website Settings","/admin/settings",Settings]];return <div className="mx-auto max-w-7xl"><p className="text-sm text-violet-300">Admin</p><h1 className="mt-1 text-3xl font-bold text-white">Boosty Control Center</h1><div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{cards.map(([t,to,I])=><Link className="card p-6 hover:bg-white/[0.07]" to={to as string} key={t as string}><I className="h-6 w-6 text-violet-300"/><h2 className="mt-5 font-bold text-white">{t as string}</h2><p className="mt-2 text-sm text-slate-500">Manage {String(t).toLowerCase()}.</p></Link>)}</div></div>}
