@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { supabase } from "../lib/supabaseClient";
+import { supabase } from "../lib/supabase";
 
 type Category = {
   id: string;
@@ -25,44 +25,69 @@ type Service = {
 };
 
 type Profile = {
+  id: string;
   balance: number | null;
 };
 
-const platformIcons: Record<string, string> = {
-  Facebook: "f",
-  Instagram: "◎",
-  TikTok: "♪",
-  YouTube: "▶",
-  Twitter: "𝕏",
-  Spotify: "●",
-  Telegram: "✈",
-  LinkedIn: "in",
-  Discord: "🎮",
-  "Website Traffic": "🌐",
-  Others: "✦",
-};
-
-const platformOrder = [
-  "Facebook",
+const PLATFORM_ORDER = [
+  "All",
   "Instagram",
+  "Facebook",
   "TikTok",
   "YouTube",
   "Twitter",
-  "Spotify",
   "Telegram",
   "LinkedIn",
   "Discord",
-  "Website Traffic",
+  "Spotify",
+  "Website",
   "Others",
 ];
 
+const platformIcons: Record<string, string> = {
+  All: "✦",
+  Instagram: "◎",
+  Facebook: "f",
+  TikTok: "♪",
+  YouTube: "▶",
+  Twitter: "♥",
+  Telegram: "➤",
+  LinkedIn: "in",
+  Discord: "◈",
+  Spotify: "●",
+  Website: "◉",
+  Others: "✧",
+};
+
 function formatBDT(value: number) {
-  return `৳ ${value.toFixed(2)}`;
+  return new Intl.NumberFormat("en-BD", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function normalizePlatform(platform: string) {
+  const value = platform.trim().toLowerCase();
+
+  if (value === "youtube") return "YouTube";
+  if (value === "tiktok") return "TikTok";
+  if (value === "instagram") return "Instagram";
+  if (value === "facebook") return "Facebook";
+  if (value === "twitter" || value === "x") return "Twitter";
+  if (value === "telegram") return "Telegram";
+  if (value === "linkedin") return "LinkedIn";
+  if (value === "discord") return "Discord";
+  if (value === "spotify") return "Spotify";
+  if (value === "website") return "Website";
+
+  return platform;
 }
 
 export default function NewOrder() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+
+  const serviceFromUrl = searchParams.get("service");
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [services, setServices] = useState<Service[]>([]);
@@ -78,7 +103,8 @@ export default function NewOrder() {
   const [balance, setBalance] = useState(0);
 
   const [loading, setLoading] = useState(true);
-  const [ordering, setOrdering] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -87,16 +113,15 @@ export default function NewOrder() {
    * LOAD DATA
    * ---------------------------------------------------------
    */
-
   useEffect(() => {
     loadData();
   }, []);
 
   async function loadData() {
-    try {
-      setLoading(true);
-      setError("");
+    setLoading(true);
+    setError("");
 
+    try {
       const {
         data: { user },
         error: userError,
@@ -119,30 +144,24 @@ export default function NewOrder() {
               "id, platform, name, description, status, sort_order"
             )
             .eq("status", "active")
-            .order("sort_order", { ascending: true }),
+            .order("sort_order", {
+              ascending: true,
+              nullsFirst: false,
+            }),
 
           supabase
             .from("services")
             .select(
-              `
-                id,
-                service_id,
-                platform,
-                category_id,
-                name,
-                description,
-                rate_per_1000,
-                min_quantity,
-                max_quantity,
-                status
-              `
+              "id, service_id, platform, category_id, name, description, rate_per_1000, min_quantity, max_quantity, status"
             )
             .eq("status", "active")
-            .order("service_id", { ascending: true }),
+            .order("service_id", {
+              ascending: true,
+            }),
 
           supabase
             .from("profiles")
-            .select("balance")
+            .select("id, balance")
             .eq("id", user.id)
             .maybeSingle(),
         ]);
@@ -158,37 +177,51 @@ export default function NewOrder() {
       setCategories(categoriesResult.data || []);
       setServices(servicesResult.data || []);
 
-      const profile = profileResult.data as Profile | null;
+      if (profileResult.error) {
+        console.warn(
+          "Profile balance could not be loaded:",
+          profileResult.error.message
+        );
+      }
 
-      if (profile?.balance !== null && profile?.balance !== undefined) {
-        setBalance(Number(profile.balance));
+      if (profileResult.data) {
+        setBalance(Number(profileResult.data.balance || 0));
       }
 
       /*
-       * If URL contains ?service=UUID
+       * If URL contains:
+       * /new-order?service=UUID
+       *
        * automatically select that service.
        */
-      const urlService = searchParams.get("service");
-
-      if (urlService && servicesResult.data) {
-        const matchingService = servicesResult.data.find(
+      if (serviceFromUrl && servicesResult.data) {
+        const urlService = servicesResult.data.find(
           (service) =>
-            service.id === urlService ||
-            service.service_id === urlService
+            service.id === serviceFromUrl ||
+            service.service_id === serviceFromUrl
         );
 
-        if (matchingService) {
-          setSelectedServiceId(matchingService.id);
-          setSelectedPlatform(matchingService.platform);
-          setSelectedCategory(matchingService.category_id);
+        if (urlService) {
+          setSelectedServiceId(urlService.id);
+
+          const normalized = normalizePlatform(urlService.platform);
+
+          if (
+            PLATFORM_ORDER.includes(normalized) &&
+            normalized !== "All"
+          ) {
+            setSelectedPlatform(normalized);
+          }
+
+          setSelectedCategory(urlService.category_id);
         }
       }
     } catch (err: any) {
-      console.error("New Order load error:", err);
+      console.error(err);
 
       setError(
         err?.message ||
-          "Failed to load services. Please refresh the page."
+          "Unable to load services. Please refresh the page."
       );
     } finally {
       setLoading(false);
@@ -197,83 +230,89 @@ export default function NewOrder() {
 
   /*
    * ---------------------------------------------------------
-   * PLATFORMS
+   * SELECTED SERVICE
    * ---------------------------------------------------------
    */
-
-  const availablePlatforms = useMemo(() => {
-    const dbPlatforms = Array.from(
-      new Set(
-        categories
-          .filter((category) => category.status === "active")
-          .map((category) => category.platform)
-      )
+  const selectedService = useMemo(() => {
+    return (
+      services.find((service) => service.id === selectedServiceId) ||
+      null
     );
-
-    const ordered = platformOrder.filter((platform) =>
-      dbPlatforms.includes(platform)
-    );
-
-    const extra = dbPlatforms.filter(
-      (platform) => !platformOrder.includes(platform)
-    );
-
-    return [...ordered, ...extra];
-  }, [categories]);
+  }, [services, selectedServiceId]);
 
   /*
    * ---------------------------------------------------------
-   * CATEGORIES
+   * AVAILABLE PLATFORMS
    * ---------------------------------------------------------
    */
+  const availablePlatforms = useMemo(() => {
+    const found = new Set<string>();
 
-  const platformCategories = useMemo(() => {
-    if (selectedPlatform === "All") {
-      return categories;
-    }
+    services.forEach((service) => {
+      const platform = normalizePlatform(service.platform);
 
-    return categories.filter(
-      (category) => category.platform === selectedPlatform
+      if (platform) {
+        found.add(platform);
+      }
+    });
+
+    return PLATFORM_ORDER.filter(
+      (platform) =>
+        platform === "All" || found.has(platform)
     );
+  }, [services]);
+
+  /*
+   * ---------------------------------------------------------
+   * CATEGORY FILTER
+   * ---------------------------------------------------------
+   */
+  const platformCategories = useMemo(() => {
+    return categories.filter((category) => {
+      if (selectedPlatform === "All") {
+        return true;
+      }
+
+      return (
+        normalizePlatform(category.platform) ===
+        selectedPlatform
+      );
+    });
   }, [categories, selectedPlatform]);
 
   /*
    * ---------------------------------------------------------
-   * SERVICES
+   * FILTER SERVICES
    * ---------------------------------------------------------
    */
-
   const filteredServices = useMemo(() => {
-    let result = services;
+    const keyword = search.trim().toLowerCase();
 
-    if (selectedPlatform !== "All") {
-      result = result.filter(
-        (service) => service.platform === selectedPlatform
+    return services.filter((service) => {
+      const platformMatch =
+        selectedPlatform === "All" ||
+        normalizePlatform(service.platform) ===
+          selectedPlatform;
+
+      const categoryMatch =
+        !selectedCategory ||
+        service.category_id === selectedCategory;
+
+      const searchMatch =
+        !keyword ||
+        service.name.toLowerCase().includes(keyword) ||
+        service.service_id.toLowerCase().includes(keyword) ||
+        service.platform.toLowerCase().includes(keyword) ||
+        (service.description || "")
+          .toLowerCase()
+          .includes(keyword);
+
+      return (
+        platformMatch &&
+        categoryMatch &&
+        searchMatch
       );
-    }
-
-    if (selectedCategory) {
-      result = result.filter(
-        (service) => service.category_id === selectedCategory
-      );
-    }
-
-    const searchText = search.trim().toLowerCase();
-
-    if (searchText) {
-      result = result.filter((service) => {
-        return (
-          service.service_id.toLowerCase().includes(searchText) ||
-          service.name.toLowerCase().includes(searchText) ||
-          service.platform.toLowerCase().includes(searchText) ||
-          (service.description || "")
-            .toLowerCase()
-            .includes(searchText)
-        );
-      });
-    }
-
-    return result;
+    });
   }, [
     services,
     selectedPlatform,
@@ -281,51 +320,54 @@ export default function NewOrder() {
     search,
   ]);
 
-  const selectedService = useMemo(() => {
-    return (
-      services.find(
-        (service) => service.id === selectedServiceId
-      ) || null
-    );
-  }, [services, selectedServiceId]);
-
   /*
    * ---------------------------------------------------------
-   * PRICE
+   * SELECTED SERVICE CHANGE
    * ---------------------------------------------------------
-   *
-   * rate_per_1000 = price for 1000 quantity
-   *
-   * Example:
-   * rate_per_1000 = 40
-   * quantity = 2500
-   *
-   * charge = 40 * (2500 / 1000)
-   *        = 100
    */
+  function handleServiceChange(serviceId: string) {
+    setSelectedServiceId(serviceId);
+    setError("");
+    setSuccess("");
 
-  const numericQuantity = Number(quantity) || 0;
+    const service = services.find(
+      (item) => item.id === serviceId
+    );
 
-  const totalCharge = selectedService
-    ? (Number(selectedService.rate_per_1000) / 1000) *
-      numericQuantity
-    : 0;
+    if (!service) {
+      return;
+    }
 
-  const insufficientBalance = totalCharge > balance;
+    setSelectedCategory(service.category_id);
+
+    const platform = normalizePlatform(service.platform);
+
+    if (
+      PLATFORM_ORDER.includes(platform) &&
+      platform !== "All"
+    ) {
+      setSelectedPlatform(platform);
+    }
+
+    /*
+     * Reset quantity when changing service.
+     */
+    setQuantity("");
+  }
 
   /*
    * ---------------------------------------------------------
    * PLATFORM CHANGE
    * ---------------------------------------------------------
    */
-
   function handlePlatformChange(platform: string) {
     setSelectedPlatform(platform);
     setSelectedCategory("");
     setSelectedServiceId("");
     setQuantity("");
-    setSuccess("");
+    setSearch("");
     setError("");
+    setSuccess("");
   }
 
   /*
@@ -333,44 +375,46 @@ export default function NewOrder() {
    * CATEGORY CHANGE
    * ---------------------------------------------------------
    */
-
   function handleCategoryChange(categoryId: string) {
     setSelectedCategory(categoryId);
     setSelectedServiceId("");
     setQuantity("");
-    setSuccess("");
     setError("");
+    setSuccess("");
   }
 
   /*
    * ---------------------------------------------------------
-   * SERVICE CHANGE
+   * QUANTITY
    * ---------------------------------------------------------
    */
+  const numericQuantity = Number(quantity || 0);
 
-  function handleServiceChange(serviceId: string) {
-    setSelectedServiceId(serviceId);
-    setQuantity("");
-    setSuccess("");
-    setError("");
+  const totalCharge = selectedService
+    ? (numericQuantity / 1000) *
+      Number(selectedService.rate_per_1000 || 0)
+    : 0;
 
-    const service = services.find(
-      (item) => item.id === serviceId
-    );
+  const quantityTooLow =
+    selectedService &&
+    numericQuantity > 0 &&
+    numericQuantity < Number(selectedService.min_quantity);
 
-    if (service) {
-      setSelectedPlatform(service.platform);
-      setSelectedCategory(service.category_id);
-    }
-  }
+  const quantityTooHigh =
+    selectedService &&
+    numericQuantity > Number(selectedService.max_quantity);
+
+  const insufficientBalance =
+    totalCharge > balance;
 
   /*
    * ---------------------------------------------------------
-   * ORDER SUBMIT
+   * CONFIRM ORDER
    * ---------------------------------------------------------
    */
-
-  async function handleSubmit(event: React.FormEvent) {
+  async function handleSubmit(
+    event: React.FormEvent<HTMLFormElement>
+  ) {
     event.preventDefault();
 
     setError("");
@@ -382,53 +426,73 @@ export default function NewOrder() {
     }
 
     if (!link.trim()) {
-      setError("Please enter your link.");
+      setError("Please enter your target link.");
       return;
     }
 
-    if (!quantity.trim()) {
+    if (!quantity) {
       setError("Please enter quantity.");
       return;
     }
 
-    const qty = Number(quantity);
-
-    if (!Number.isInteger(qty)) {
+    if (!Number.isInteger(numericQuantity)) {
       setError("Quantity must be a whole number.");
       return;
     }
 
-    if (qty < selectedService.min_quantity) {
+    if (
+      numericQuantity <
+      Number(selectedService.min_quantity)
+    ) {
       setError(
-        `Minimum quantity is ${selectedService.min_quantity.toLocaleString()}.`
+        `Minimum quantity is ${Number(
+          selectedService.min_quantity
+        ).toLocaleString()}.`
       );
       return;
     }
 
-    if (qty > selectedService.max_quantity) {
+    if (
+      numericQuantity >
+      Number(selectedService.max_quantity)
+    ) {
       setError(
-        `Maximum quantity is ${selectedService.max_quantity.toLocaleString()}.`
+        `Maximum quantity is ${Number(
+          selectedService.max_quantity
+        ).toLocaleString()}.`
       );
       return;
     }
 
     if (totalCharge <= 0) {
-      setError("Invalid order amount.");
+      setError("Order charge must be greater than ৳0.00.");
       return;
     }
 
-    if (totalCharge > balance) {
+    if (insufficientBalance) {
       setError(
-        `Insufficient balance. You need ${formatBDT(
+        `Insufficient balance. You need ৳${formatBDT(
           totalCharge
-        )}, but your balance is ${formatBDT(balance)}.`
+        )}, but your balance is ৳${formatBDT(balance)}.`
       );
       return;
     }
 
+    /*
+     * Basic URL validation.
+     */
     try {
-      setOrdering(true);
+      new URL(link.trim());
+    } catch {
+      setError(
+        "Please enter a valid URL, for example https://facebook.com/..."
+      );
+      return;
+    }
 
+    setSubmitting(true);
+
+    try {
       const {
         data: { user },
         error: userError,
@@ -444,73 +508,73 @@ export default function NewOrder() {
       }
 
       /*
-       * Existing orders table insert.
+       * Insert order.
        *
-       * These fields match the normal Boosty order structure:
-       * user_id
-       * service_id
-       * link
-       * quantity
-       * charge
-       * status
+       * Important:
+       * service_id in orders references services.id (UUID).
+       * rate is read from services.rate_per_1000.
        */
-
-      const { error: orderError } = await supabase
-        .from("orders")
-        .insert({
-          user_id: user.id,
-          service_id: selectedService.service_id,
-          link: link.trim(),
-          quantity: qty,
-          charge: Number(totalCharge.toFixed(2)),
-          status: "pending",
-        });
+      const { data: order, error: orderError } =
+        await supabase
+          .from("orders")
+          .insert({
+            user_id: user.id,
+            service_id: selectedService.id,
+            link: link.trim(),
+            quantity: numericQuantity,
+            charge: Number(totalCharge.toFixed(2)),
+            status: "pending",
+          })
+          .select()
+          .single();
 
       if (orderError) {
         throw orderError;
       }
 
       /*
-       * Refresh balance after successful order.
+       * Show success.
        */
-      const { data: updatedProfile } = await supabase
-        .from("profiles")
-        .select("balance")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      if (updatedProfile?.balance !== undefined) {
-        setBalance(Number(updatedProfile.balance));
-      } else {
-        setBalance((previous) =>
-          Math.max(0, previous - totalCharge)
-        );
-      }
-
       setSuccess(
-        `Order placed successfully. Total charge: ${formatBDT(
-          totalCharge
-        )}`
+        `Order placed successfully${
+          order?.id ? ` • Order ID: ${order.id}` : ""
+        }`
+      );
+
+      /*
+       * Update displayed balance locally.
+       *
+       * This does NOT directly update the database balance.
+       * The database/RPC/trigger should handle the actual
+       * wallet deduction if your project already has that logic.
+       */
+      setBalance((current) =>
+        Math.max(
+          0,
+          Number(
+            (current - totalCharge).toFixed(2)
+          )
+        )
       );
 
       setLink("");
       setQuantity("");
 
       /*
-       * Optional: go to Orders page after a short delay.
+       * Go to orders after a short delay.
        */
       setTimeout(() => {
         navigate("/orders");
       }, 1200);
     } catch (err: any) {
-      console.error("Order submit error:", err);
+      console.error("Order creation error:", err);
 
       setError(
         err?.message ||
-          "Failed to place order. Please try again."
+          "Failed to create order. Please try again."
       );
     } finally {
-      setOrdering(false);
+      setSubmitting(false);
     }
   }
 
@@ -519,13 +583,13 @@ export default function NewOrder() {
    * LOADING
    * ---------------------------------------------------------
    */
-
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#020617] text-white flex items-center justify-center">
+      <div className="min-h-[70vh] flex items-center justify-center">
         <div className="text-center">
-          <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-slate-400">
+          <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-2 border-slate-700 border-t-blue-500" />
+
+          <p className="text-sm text-slate-400">
             Loading services...
           </p>
         </div>
@@ -538,538 +602,475 @@ export default function NewOrder() {
    * UI
    * ---------------------------------------------------------
    */
-
   return (
-    <div className="min-h-screen bg-[#020617] text-white">
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        {/* Header */}
-        <div className="mb-6">
-          <p className="text-sm text-slate-400">
+    <div className="w-full">
+      {/* Header */}
+      <div className="mb-7 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="mb-1 text-sm text-blue-400">
             Order
           </p>
 
-          <h1 className="text-3xl font-bold mt-1">
+          <h1 className="text-3xl font-bold tracking-tight text-white">
             New Order
           </h1>
+
+          <p className="mt-2 text-sm text-slate-400">
+            Choose a platform and service, then place your
+            order.
+          </p>
         </div>
 
-        {/* Main grid */}
-        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-6">
-          {/* LEFT SIDE */}
-          <div>
-            {/* Search */}
-            <div className="bg-[#0b1120] border border-slate-800 rounded-2xl p-4 mb-5">
-              <div className="relative">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-lg">
-                  🔍
-                </span>
+        <div className="rounded-xl border border-slate-800 bg-slate-900/70 px-5 py-3">
+          <p className="text-xs text-slate-500">
+            Available Balance
+          </p>
 
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) =>
-                    setSearch(e.target.value)
-                  }
-                  placeholder="Search services..."
-                  className="w-full h-12 rounded-xl bg-[#111827] border border-slate-700 pl-11 pr-4 text-white placeholder:text-slate-500 outline-none focus:border-blue-500"
-                />
-              </div>
-            </div>
+          <p className="mt-1 text-lg font-bold text-white">
+            ৳ {formatBDT(balance)}
+          </p>
+        </div>
+      </div>
 
-            {/* Platform buttons */}
-            <div className="bg-[#0b1120] border border-slate-800 rounded-2xl p-4 mb-5">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="font-semibold">
-                  Platforms
-                </h2>
+      {/* Error */}
+      {error && (
+        <div className="mb-5 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          {error}
+        </div>
+      )}
 
-                <span className="text-xs text-slate-500">
-                  {services.length} services
-                </span>
-              </div>
+      {/* Success */}
+      {success && (
+        <div className="mb-5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+          {success}
+        </div>
+      )}
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                {/* All */}
+      {/* Main */}
+      <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5 shadow-xl sm:p-7">
+        {/* Platform buttons */}
+        <div className="mb-7">
+          <div className="mb-3 flex items-center justify-between">
+            <label className="text-sm font-medium text-slate-200">
+              Platform
+            </label>
+
+            <span className="text-xs text-slate-500">
+              {services.length} services
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6">
+            {availablePlatforms.map((platform) => {
+              const active =
+                selectedPlatform === platform;
+
+              return (
                 <button
+                  key={platform}
                   type="button"
                   onClick={() =>
-                    handlePlatformChange("All")
+                    handlePlatformChange(platform)
                   }
-                  className={`rounded-xl px-4 py-4 transition border ${
-                    selectedPlatform === "All"
-                      ? "bg-blue-600 border-blue-500 text-white"
-                      : "bg-[#111827] border-slate-700 text-slate-300 hover:border-blue-500"
+                  className={`flex min-h-[48px] items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+                    active
+                      ? "border-blue-500 bg-blue-600 text-white shadow-lg shadow-blue-600/20"
+                      : "border-slate-800 bg-slate-900 text-slate-300 hover:border-slate-700 hover:bg-slate-800 hover:text-white"
                   }`}
                 >
-                  <div className="text-xl mb-1">
-                    ✦
-                  </div>
-                  <div className="font-semibold text-sm">
-                    Everything
-                  </div>
+                  <span className="flex h-6 w-6 items-center justify-center rounded-md bg-white/10 text-xs">
+                    {platformIcons[platform] || "•"}
+                  </span>
+
+                  {platform}
                 </button>
+              );
+            })}
+          </div>
+        </div>
 
-                {availablePlatforms.map(
-                  (platform) => (
-                    <button
-                      type="button"
-                      key={platform}
-                      onClick={() =>
-                        handlePlatformChange(platform)
-                      }
-                      className={`rounded-xl px-4 py-4 transition border ${
-                        selectedPlatform === platform
-                          ? "bg-blue-600 border-blue-500 text-white"
-                          : "bg-[#111827] border-slate-700 text-slate-300 hover:border-blue-500"
-                      }`}
-                    >
-                      <div className="text-xl mb-1">
-                        {platformIcons[platform] ||
-                          "✦"}
-                      </div>
+        {/* Search */}
+        <div className="mb-6">
+          <label className="mb-2 block text-sm font-medium text-slate-200">
+            Search
+          </label>
 
-                      <div className="font-semibold text-sm">
-                        {platform}
-                      </div>
-                    </button>
-                  )
-                )}
-              </div>
-            </div>
+          <div className="relative">
+            <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">
+              🔍
+            </span>
 
-            {/* Category buttons */}
-            {platformCategories.length > 0 && (
-              <div className="bg-[#0b1120] border border-slate-800 rounded-2xl p-4 mb-5">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="font-semibold">
-                    Category
-                  </h2>
+            <input
+              type="text"
+              value={search}
+              onChange={(event) =>
+                setSearch(event.target.value)
+              }
+              placeholder="Search by service ID, name or description..."
+              className="w-full rounded-xl border border-slate-800 bg-slate-900 px-11 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+            />
+          </div>
+        </div>
 
-                  {selectedCategory && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setSelectedCategory("")
-                      }
-                      className="text-xs text-blue-400 hover:text-blue-300"
-                    >
-                      Clear
-                    </button>
+        <form onSubmit={handleSubmit}>
+          {/* Category */}
+          <div className="mb-5">
+            <label className="mb-2 block text-sm font-medium text-slate-200">
+              Category
+            </label>
+
+            <select
+              value={selectedCategory}
+              onChange={(event) =>
+                handleCategoryChange(event.target.value)
+              }
+              className="w-full appearance-none rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 text-sm text-white outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+            >
+              <option value="">
+                All categories
+              </option>
+
+              {platformCategories.map((category) => (
+                <option
+                  key={category.id}
+                  value={category.id}
+                >
+                  {category.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Service */}
+          <div className="mb-5">
+            <label className="mb-2 block text-sm font-medium text-slate-200">
+              Service
+            </label>
+
+            <select
+              value={selectedServiceId}
+              onChange={(event) =>
+                handleServiceChange(event.target.value)
+              }
+              className="w-full appearance-none rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 text-sm text-white outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+            >
+              <option value="">
+                Select a service
+              </option>
+
+              {filteredServices.map((service) => (
+                <option
+                  key={service.id}
+                  value={service.id}
+                >
+                  {service.service_id} — {service.name} — ৳
+                  {formatBDT(
+                    Number(service.rate_per_1000)
                   )}
-                </div>
+                  /1K
+                </option>
+              ))}
+            </select>
 
-                <div className="flex flex-wrap gap-2">
-                  {platformCategories.map(
-                    (category) => (
-                      <button
-                        type="button"
-                        key={category.id}
-                        onClick={() =>
-                          handleCategoryChange(
-                            category.id
-                          )
-                        }
-                        className={`px-4 py-2.5 rounded-lg text-sm border transition ${
-                          selectedCategory ===
-                          category.id
-                            ? "bg-blue-600 border-blue-500 text-white"
-                            : "bg-[#111827] border-slate-700 text-slate-300 hover:border-blue-500"
-                        }`}
-                      >
-                        {category.name}
-                      </button>
-                    )
-                  )}
-                </div>
-              </div>
+            {filteredServices.length === 0 && (
+              <p className="mt-2 text-xs text-amber-400">
+                No services found for the selected filters.
+              </p>
             )}
+          </div>
 
-            {/* Service list */}
-            <div className="bg-[#0b1120] border border-slate-800 rounded-2xl overflow-hidden">
-              <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-                <div>
-                  <h2 className="font-semibold">
-                    Services
+          {/* Service details */}
+          {selectedService && (
+            <div className="mb-6 rounded-xl border border-blue-500/20 bg-blue-500/5 p-5">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <span className="rounded-md bg-blue-600 px-2 py-1 text-xs font-bold text-white">
+                      {selectedService.service_id}
+                    </span>
+
+                    <span className="rounded-md bg-slate-800 px-2 py-1 text-xs text-slate-300">
+                      {normalizePlatform(
+                        selectedService.platform
+                      )}
+                    </span>
+                  </div>
+
+                  <h2 className="text-base font-bold text-white">
+                    {selectedService.name}
                   </h2>
 
-                  <p className="text-xs text-slate-500 mt-1">
-                    Select a service to continue
+                  {selectedService.description && (
+                    <p className="mt-2 text-sm leading-6 text-slate-400">
+                      {selectedService.description}
+                    </p>
+                  )}
+                </div>
+
+                <div className="shrink-0 rounded-xl border border-slate-800 bg-slate-950 px-4 py-3 text-left sm:text-right">
+                  <p className="text-xs text-slate-500">
+                    Rate
+                  </p>
+
+                  <p className="mt-1 text-lg font-bold text-white">
+                    ৳{" "}
+                    {formatBDT(
+                      Number(
+                        selectedService.rate_per_1000
+                      )
+                    )}
+                    <span className="text-xs font-normal text-slate-500">
+                      {" "}
+                      / 1K
+                    </span>
+                  </p>
+                </div>
+              </div>
+
+              {/* Service limits */}
+              <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="rounded-lg bg-slate-900/80 p-3">
+                  <p className="text-xs text-slate-500">
+                    Min
+                  </p>
+
+                  <p className="mt-1 text-sm font-semibold text-white">
+                    {Number(
+                      selectedService.min_quantity
+                    ).toLocaleString()}
                   </p>
                 </div>
 
+                <div className="rounded-lg bg-slate-900/80 p-3">
+                  <p className="text-xs text-slate-500">
+                    Max
+                  </p>
+
+                  <p className="mt-1 text-sm font-semibold text-white">
+                    {Number(
+                      selectedService.max_quantity
+                    ).toLocaleString()}
+                  </p>
+                </div>
+
+                <div className="rounded-lg bg-slate-900/80 p-3">
+                  <p className="text-xs text-slate-500">
+                    Rate
+                  </p>
+
+                  <p className="mt-1 text-sm font-semibold text-white">
+                    ৳
+                    {formatBDT(
+                      Number(
+                        selectedService.rate_per_1000
+                      )
+                    )}
+                  </p>
+                </div>
+
+                <div className="rounded-lg bg-slate-900/80 p-3">
+                  <p className="text-xs text-slate-500">
+                    Status
+                  </p>
+
+                  <p className="mt-1 text-sm font-semibold text-emerald-400">
+                    {selectedService.status}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Link */}
+          <div className="mb-5">
+            <label className="mb-2 block text-sm font-medium text-slate-200">
+              Link
+            </label>
+
+            <input
+              type="url"
+              value={link}
+              onChange={(event) =>
+                setLink(event.target.value)
+              }
+              placeholder={
+                selectedService
+                  ? `https://${selectedService.platform.toLowerCase()}.com/...`
+                  : "https://..."
+              }
+              className="w-full rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+            />
+
+            <p className="mt-2 text-xs text-slate-500">
+              Enter the profile, page, post, video or target
+              URL required by the selected service.
+            </p>
+          </div>
+
+          {/* Quantity */}
+          <div className="mb-6">
+            <div className="mb-2 flex items-center justify-between">
+              <label className="text-sm font-medium text-slate-200">
+                Quantity
+              </label>
+
+              {selectedService && (
                 <span className="text-xs text-slate-500">
-                  {filteredServices.length} found
+                  {Number(
+                    selectedService.min_quantity
+                  ).toLocaleString()}{" "}
+                  –{" "}
+                  {Number(
+                    selectedService.max_quantity
+                  ).toLocaleString()}
+                </span>
+              )}
+            </div>
+
+            <input
+              type="number"
+              min={
+                selectedService?.min_quantity || 1
+              }
+              max={
+                selectedService?.max_quantity ||
+                undefined
+              }
+              step="1"
+              value={quantity}
+              onChange={(event) =>
+                setQuantity(event.target.value)
+              }
+              placeholder="Enter quantity"
+              disabled={!selectedService}
+              className={`w-full rounded-xl border bg-slate-900 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 ${
+                quantityTooLow || quantityTooHigh
+                  ? "border-red-500"
+                  : "border-slate-800"
+              }`}
+            />
+
+            {quantityTooLow && (
+              <p className="mt-2 text-xs text-red-400">
+                Minimum quantity is{" "}
+                {Number(
+                  selectedService?.min_quantity
+                ).toLocaleString()}
+                .
+              </p>
+            )}
+
+            {quantityTooHigh && (
+              <p className="mt-2 text-xs text-red-400">
+                Maximum quantity is{" "}
+                {Number(
+                  selectedService?.max_quantity
+                ).toLocaleString()}
+                .
+              </p>
+            )}
+          </div>
+
+          {/* Price summary */}
+          <div className="mb-6 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/70">
+            <div className="border-b border-slate-800 p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-slate-500">
+                    Your balance
+                  </p>
+
+                  <p className="mt-1 text-base font-semibold text-white">
+                    ৳ {formatBDT(balance)}
+                  </p>
+                </div>
+
+                <div className="text-right">
+                  <p className="text-xs text-slate-500">
+                    Rate
+                  </p>
+
+                  <p className="mt-1 text-base font-semibold text-white">
+                    ৳{" "}
+                    {selectedService
+                      ? formatBDT(
+                          Number(
+                            selectedService.rate_per_1000
+                          )
+                        )
+                      : "0.00"}
+                    <span className="text-xs font-normal text-slate-500">
+                      {" "}
+                      / 1K
+                    </span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-5">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-slate-300">
+                  Total charge
+                </span>
+
+                <span className="text-2xl font-bold text-white">
+                  ৳ {formatBDT(totalCharge)}
                 </span>
               </div>
 
-              {filteredServices.length === 0 ? (
-                <div className="p-10 text-center">
-                  <div className="text-4xl mb-3">
-                    🔎
+              {numericQuantity > 0 &&
+                selectedService && (
+                  <p className="mt-2 text-right text-xs text-slate-500">
+                    {numericQuantity.toLocaleString()} × ৳
+                    {formatBDT(
+                      Number(
+                        selectedService.rate_per_1000
+                      )
+                    )}{" "}
+                    / 1,000
+                  </p>
+                )}
+
+              {insufficientBalance &&
+                totalCharge > 0 && (
+                  <div className="mt-4 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                    Insufficient balance for this order.
                   </div>
-
-                  <p className="text-slate-300 font-medium">
-                    No services found
-                  </p>
-
-                  <p className="text-slate-500 text-sm mt-1">
-                    Try another platform or search.
-                  </p>
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-800">
-                  {filteredServices.map(
-                    (service) => {
-                      const selected =
-                        selectedServiceId ===
-                        service.id;
-
-                      return (
-                        <button
-                          type="button"
-                          key={service.id}
-                          onClick={() =>
-                            handleServiceChange(
-                              service.id
-                            )
-                          }
-                          className={`w-full text-left p-4 transition ${
-                            selected
-                              ? "bg-blue-500/10"
-                              : "hover:bg-white/[0.03]"
-                          }`}
-                        >
-                          <div className="flex items-start gap-3">
-                            <div
-                              className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 font-bold ${
-                                selected
-                                  ? "bg-blue-600 text-white"
-                                  : "bg-slate-800 text-slate-300"
-                              }`}
-                            >
-                              {platformIcons[
-                                service.platform
-                              ] || "✦"}
-                            </div>
-
-                            <div className="min-w-0 flex-1">
-                              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                                <div>
-                                  <span className="text-xs text-blue-400 font-mono">
-                                    ID:{" "}
-                                    {
-                                      service.service_id
-                                    }
-                                  </span>
-
-                                  <h3 className="font-semibold text-white mt-0.5">
-                                    {service.name}
-                                  </h3>
-                                </div>
-
-                                <div className="text-left sm:text-right">
-                                  <div className="font-bold text-white">
-                                    {formatBDT(
-                                      Number(
-                                        service.rate_per_1000
-                                      )
-                                    )}
-                                  </div>
-
-                                  <div className="text-xs text-slate-500">
-                                    per 1K
-                                  </div>
-                                </div>
-                              </div>
-
-                              <p className="text-sm text-slate-400 mt-2">
-                                {service.description ||
-                                  service.name}
-                              </p>
-
-                              <div className="flex flex-wrap gap-2 mt-3">
-                                <span className="text-xs px-2 py-1 rounded-md bg-slate-800 text-slate-400">
-                                  Min{" "}
-                                  {service.min_quantity.toLocaleString()}
-                                </span>
-
-                                <span className="text-xs px-2 py-1 rounded-md bg-slate-800 text-slate-400">
-                                  Max{" "}
-                                  {service.max_quantity.toLocaleString()}
-                                </span>
-
-                                <span className="text-xs px-2 py-1 rounded-md bg-slate-800 text-slate-400">
-                                  Instant
-                                </span>
-
-                                <span className="text-xs px-2 py-1 rounded-md bg-slate-800 text-slate-400">
-                                  Active
-                                </span>
-                              </div>
-                            </div>
-
-                            <div className="text-slate-500 pt-2">
-                              →
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    }
-                  )}
-                </div>
-              )}
+                )}
             </div>
           </div>
 
-          {/* RIGHT SIDE - ORDER FORM */}
-          <div>
-            <div className="sticky top-6 bg-[#0b1120] border border-slate-800 rounded-2xl overflow-hidden">
-              {/* Selected service header */}
-              <div className="p-5 border-b border-slate-800">
-                <p className="text-xs uppercase tracking-wider text-slate-500">
-                  New Order
-                </p>
+          {/* Confirm */}
+          <button
+            type="submit"
+            disabled={
+              submitting ||
+              !selectedService ||
+              !link.trim() ||
+              !quantity ||
+              numericQuantity <= 0 ||
+              !!quantityTooLow ||
+              !!quantityTooHigh ||
+              insufficientBalance
+            }
+            className="flex w-full items-center justify-center rounded-xl bg-blue-600 px-5 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
+          >
+            {submitting ? (
+              <>
+                <span className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                Processing Order...
+              </>
+            ) : (
+              "Confirm Order"
+            )}
+          </button>
 
-                {selectedService ? (
-                  <>
-                    <div className="flex items-start gap-3 mt-3">
-                      <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-lg">
-                        {platformIcons[
-                          selectedService.platform
-                        ] || "✦"}
-                      </div>
-
-                      <div className="min-w-0">
-                        <p className="text-xs text-blue-400 font-mono">
-                          {
-                            selectedService.service_id
-                          }
-                        </p>
-
-                        <h2 className="font-bold text-white mt-1 leading-snug">
-                          {selectedService.name}
-                        </h2>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 p-3 rounded-xl bg-[#111827]">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-slate-400">
-                          Price
-                        </span>
-
-                        <span className="font-semibold text-white">
-                          {formatBDT(
-                            Number(
-                              selectedService.rate_per_1000
-                            )
-                          )}{" "}
-                          / 1K
-                        </span>
-                      </div>
-
-                      <div className="flex justify-between text-sm mt-2">
-                        <span className="text-slate-400">
-                          Min
-                        </span>
-
-                        <span className="text-white">
-                          {selectedService.min_quantity.toLocaleString()}
-                        </span>
-                      </div>
-
-                      <div className="flex justify-between text-sm mt-2">
-                        <span className="text-slate-400">
-                          Max
-                        </span>
-
-                        <span className="text-white">
-                          {selectedService.max_quantity.toLocaleString()}
-                        </span>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div className="mt-3 p-4 rounded-xl bg-[#111827]">
-                    <p className="text-slate-400 text-sm">
-                      Select a service from the list.
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <form
-                onSubmit={handleSubmit}
-                className="p-5"
-              >
-                {/* Service dropdown */}
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-slate-300 mb-2">
-                    Service
-                  </label>
-
-                  <select
-                    value={selectedServiceId}
-                    onChange={(e) =>
-                      handleServiceChange(
-                        e.target.value
-                      )
-                    }
-                    className="w-full h-12 rounded-xl bg-[#111827] border border-slate-700 px-3 text-white outline-none focus:border-blue-500"
-                  >
-                    <option value="">
-                      Select service
-                    </option>
-
-                    {filteredServices.map(
-                      (service) => (
-                        <option
-                          key={service.id}
-                          value={service.id}
-                        >
-                          {service.service_id} -{" "}
-                          {service.name} —{" "}
-                          {formatBDT(
-                            Number(
-                              service.rate_per_1000
-                            )
-                          )}
-                          /1K
-                        </option>
-                      )
-                    )}
-                  </select>
-                </div>
-
-                {/* Link */}
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-slate-300 mb-2">
-                    Link
-                  </label>
-
-                  <input
-                    type="url"
-                    value={link}
-                    onChange={(e) =>
-                      setLink(e.target.value)
-                    }
-                    placeholder="https://facebook.com/..."
-                    className="w-full h-12 rounded-xl bg-[#111827] border border-slate-700 px-3 text-white placeholder:text-slate-500 outline-none focus:border-blue-500"
-                  />
-                </div>
-
-                {/* Quantity */}
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-slate-300 mb-2">
-                    Quantity
-                  </label>
-
-                  <input
-                    type="number"
-                    min={
-                      selectedService?.min_quantity ||
-                      1
-                    }
-                    max={
-                      selectedService?.max_quantity ||
-                      undefined
-                    }
-                    value={quantity}
-                    onChange={(e) =>
-                      setQuantity(e.target.value)
-                    }
-                    placeholder="1000"
-                    className="w-full h-12 rounded-xl bg-[#111827] border border-slate-700 px-3 text-white placeholder:text-slate-500 outline-none focus:border-blue-500"
-                  />
-
-                  {selectedService && (
-                    <p className="text-xs text-slate-500 mt-2">
-                      Min{" "}
-                      {selectedService.min_quantity.toLocaleString()}
-                      {" • "}
-                      Max{" "}
-                      {selectedService.max_quantity.toLocaleString()}
-                    </p>
-                  )}
-                </div>
-
-                {/* Balance / Charge */}
-                <div className="rounded-xl bg-[#111827] p-4 mb-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-slate-400">
-                      Your balance
-                    </span>
-
-                    <span className="text-sm text-white">
-                      {formatBDT(balance)}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between mt-3">
-                    <span className="font-semibold text-white">
-                      Total charge
-                    </span>
-
-                    <span
-                      className={`text-xl font-bold ${
-                        insufficientBalance
-                          ? "text-red-400"
-                          : "text-white"
-                      }`}
-                    >
-                      {formatBDT(totalCharge)}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Errors */}
-                {error && (
-                  <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
-                    {error}
-                  </div>
-                )}
-
-                {/* Success */}
-                {success && (
-                  <div className="mb-4 rounded-xl border border-green-500/30 bg-green-500/10 p-3 text-sm text-green-300">
-                    {success}
-                  </div>
-                )}
-
-                {/* Submit */}
-                <button
-                  type="submit"
-                  disabled={
-                    ordering ||
-                    !selectedService ||
-                    !link.trim() ||
-                    !quantity ||
-                    insufficientBalance
-                  }
-                  className="w-full h-12 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white font-semibold transition"
-                >
-                  {ordering
-                    ? "Placing Order..."
-                    : "Confirm Order"}
-                </button>
-
-                {/* Add funds */}
-                {insufficientBalance &&
-                  totalCharge > 0 && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        navigate("/add-funds")
-                      }
-                      className="w-full mt-3 h-11 rounded-xl border border-blue-500/40 text-blue-400 hover:bg-blue-500/10 transition font-medium"
-                    >
-                      Add Funds
-                    </button>
-                  )}
-              </form>
-            </div>
-          </div>
-        </div>
+          <p className="mt-3 text-center text-xs text-slate-600">
+            By confirming, your order will be submitted for
+            processing.
+          </p>
+        </form>
       </div>
     </div>
   );
